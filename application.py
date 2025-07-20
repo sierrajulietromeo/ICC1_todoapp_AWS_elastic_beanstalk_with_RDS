@@ -1,71 +1,53 @@
 from flask import Flask, request, render_template, redirect, url_for
-import sqlite3
+from flask_sqlalchemy import SQLAlchemy
 import os
 
 app = Flask(__name__)
 
-# Initialise the database
-def init_db():
-    conn = sqlite3.connect('todo.db')
-    cur = conn.cursor()
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY, 
-            task TEXT NOT NULL,
-            priority INTEGER DEFAULT 1
-        )
-    ''')
-    conn.commit()
-    conn.close()
+# Use DATABASE_URL if set, otherwise default to SQLite
+db_url = os.environ.get('DATABASE_URL', 'sqlite:///todo.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+db = SQLAlchemy(app)
 
-init_db()
+class Task(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    task = db.Column(db.String(255), nullable=False)
+    priority = db.Column(db.Integer, default=1)
 
-# Route for the home page
+with app.app_context():
+    db.create_all()
+
 @app.route('/')
 def home():
-    return render_template('index.html')  # Render a home page with a link to the task manager
+    return render_template('index.html')
 
-
-# Route for the task manager page
 @app.route('/tasks')
 def tasks():
-    conn = sqlite3.connect('todo.db')
-    cur = conn.cursor()
-    cur.execute('SELECT * FROM tasks ORDER BY priority ASC')
-    tasks = cur.fetchall()
-    conn.close()
-    return render_template('tasks.html', tasks=tasks)
+    tasks = Task.query.order_by(Task.priority.asc()).all()
+    # Pass a list of tuples for compatibility with tasks.html
+    tasks_list = [(t.id, t.task, t.priority) for t in tasks]
+    return render_template('tasks.html', tasks=tasks_list)
 
-
-# Route to add a new task
 @app.route('/add', methods=['POST'])
 def add_task():
     new_task = request.form.get('task')
     priority = request.form.get('priority')
-    conn = sqlite3.connect('todo.db')
-    cur = conn.cursor()
-    cur.execute('INSERT INTO tasks (task, priority) VALUES (?, ?)', (new_task, priority))
-    conn.commit()
-    conn.close()
+    if new_task:
+        task = Task(task=new_task, priority=int(priority))
+        db.session.add(task)
+        db.session.commit()
     return redirect(url_for('tasks'))
 
-# Route to delete a task
 @app.route('/delete/<int:task_id>', methods=['POST'])
 def delete_task(task_id):
-    conn = sqlite3.connect('todo.db')
-    cur = conn.cursor()
-    cur.execute('DELETE FROM tasks WHERE id = ?', (task_id,))
-    conn.commit()
-    conn.close()
+    task = Task.query.get(task_id)
+    if task:
+        db.session.delete(task)
+        db.session.commit()
     return redirect(url_for('tasks'))
-
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    app.run(debug=False,
-            host='0.0.0.0',
-            port=port
-    )
-
-            
+    app.run(debug=False, host='0.0.0.0', port=port)
